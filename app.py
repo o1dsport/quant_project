@@ -31,7 +31,7 @@ use_gb = st.sidebar.checkbox("Gradient Boosting", value=True)
 @st.cache_data
 def load_data(ticker, start, end):
     try:
-        data = yf.download(ticker, start=start, end=end)
+        data = yf.download(ticker, start=start, end=end, auto_adjust=True)
         if data.empty:
             return None, "No data found for the given ticker and date range."
         return data, None
@@ -46,15 +46,28 @@ if ticker:
     else:
         st.subheader(f"📊 Data for {ticker} from {start_date} to {end_date}")
         
+        # ✅ FIX: Check if data is valid before accessing
+        if data is None or len(data) == 0:
+            st.error("❌ No data available after download.")
+            st.stop()
+        
+        # ✅ FIX: Safe data access
+        try:
+            current_price = data['Close'].iloc[-1]
+            initial_price = data['Close'].iloc[0]
+        except (KeyError, IndexError) as e:
+            st.error(f"❌ Error accessing price data: {str(e)}")
+            st.stop()
+        
         # Display basic statistics
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("Current Price", f"${data['Close'][-1]:.2f}")
+            st.metric("Current Price", f"${current_price:.2f}")
         with col2:
-            change = data['Close'][-1] - data['Close'][0]
+            change = current_price - initial_price
             st.metric("Total Change", f"${change:.2f}")
         with col3:
-            pct_change = (change / data['Close'][0]) * 100
+            pct_change = (change / initial_price) * 100
             st.metric("Total Return", f"{pct_change:.2f}%")
         with col4:
             st.metric("Data Points", len(data))
