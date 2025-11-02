@@ -71,6 +71,9 @@ if ticker:
 
     # --- Linear Regression ---
     lr = LinearRegression()
+    st.code(f"X_train shape: {X_train.shape}, ndim: {X_train.ndim}")
+    st.code(f"y_train shape: {y_train.shape}, ndim: {y_train.ndim}")
+
     lr.fit(X_train, y_train)
     pred_lr = lr.predict(X_test)
     r2_lr = r2_score(y_test, pred_lr)
