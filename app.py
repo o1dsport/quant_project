@@ -28,29 +28,32 @@ if ticker:
         st.subheader(f"Data for {ticker} from {start_date} to {end_date}")
         st.line_chart(data['Close'])  # Plot closing price
 
-        # --- Prepare data for ML ---
+        # --- Prepare data ---
         close_prices = data['Close'].values
-        N = 10  # Use last 10 days to predict next
+        N = 10  # days used for prediction
         X, y = [], []
+        
         for i in range(len(close_prices) - N):
             X.append(close_prices[i:i+N])
             y.append(close_prices[i+N])
+        
         X, y = np.array(X), np.array(y)
-
-        # ✅ Check: enough samples to train?
-        if len(X) < 30:
-            st.error("❌ Not enough data to train models. Try selecting a longer date range.")
+        
+        # ✅ Check raw sample count
+        if X.shape[0] < 30:
+            st.error("❌ Not enough valid samples to build prediction models. Try a wider date range.")
             st.stop()
-
-        # --- Train/test split ---
+        
+        # --- Split data ---
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=0.2, shuffle=True, random_state=42
         )
         
-        # ✅ Extra safety check after split
-        if len(X_train) == 0 or len(y_train) == 0:
-            st.error("❌ Not enough training data after split. Try a longer date range or different stock.")
+        # ✅ Final safety checks after split
+        if X_train.size == 0 or y_train.size == 0 or X_test.size == 0 or y_test.size == 0:
+            st.error("❌ Invalid train/test split — not enough usable data. Try another stock or longer range.")
             st.stop()
+        
 
 
         # --- Model 1: Linear Regression ---
