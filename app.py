@@ -58,6 +58,9 @@ if ticker:
 
         # --- Model 1: Linear Regression ---
         lr = LinearRegression()
+        st.write(f"Shape of X_train: {X_train.shape}")
+        st.write(f"Shape of y_train: {y_train.shape}")
+
         # ✅ Final check: shape and dimension validation
         if X_train.ndim != 2 or y_train.ndim != 1:
             st.error("❌ Invalid data shape for training. X must be 2D, y must be 1D.")
