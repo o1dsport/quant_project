@@ -51,10 +51,10 @@ if ticker:
             st.error("❌ No data available after download.")
             st.stop()
         
-        # ✅ FIX: Safe data access
+        # ✅ FIX: Safe data access - extract scalar values
         try:
-            current_price = data['Close'].iloc[-1]
-            initial_price = data['Close'].iloc[0]
+            current_price = float(data['Close'].iloc[-1])
+            initial_price = float(data['Close'].iloc[0])
         except (KeyError, IndexError) as e:
             st.error(f"❌ Error accessing price data: {str(e)}")
             st.stop()
@@ -340,15 +340,15 @@ if ticker:
         
         next_day_predictions = {}
         for model_name, model in models.items():
-            next_day_predictions[model_name] = model.predict(latest_features_scaled)[0]
+            next_day_predictions[model_name] = float(model.predict(latest_features_scaled)[0])
         
-        current_price = df['Close'].iloc[-1]
+        current_price_pred = float(df['Close'].iloc[-1])
         
         pred_cols = st.columns(len(next_day_predictions))
         for i, (model_name, pred_price) in enumerate(next_day_predictions.items()):
             with pred_cols[i]:
-                change = pred_price - current_price
-                pct_change = (change / current_price) * 100
+                change = pred_price - current_price_pred
+                pct_change = (change / current_price_pred) * 100
                 
                 st.metric(
                     label=model_name,
