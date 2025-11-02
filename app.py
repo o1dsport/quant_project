@@ -58,6 +58,14 @@ if ticker:
 
         # --- Model 1: Linear Regression ---
         lr = LinearRegression()
+        # ✅ Final check: shape and dimension validation
+        if X_train.ndim != 2 or y_train.ndim != 1:
+            st.error("❌ Invalid data shape for training. X must be 2D, y must be 1D.")
+            st.stop()
+        if X_train.shape[0] != y_train.shape[0]:
+            st.error("❌ Mismatch between number of X and y samples.")
+            st.stop()
+
         lr.fit(X_train, y_train)
         pred_lr = lr.predict(X_test)
         r2_lr = r2_score(y_test, pred_lr)
