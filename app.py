@@ -46,6 +46,12 @@ if ticker:
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=0.2, shuffle=True, random_state=42
         )
+        
+        # ✅ Extra safety check after split
+        if len(X_train) == 0 or len(y_train) == 0:
+            st.error("❌ Not enough training data after split. Try a longer date range or different stock.")
+            st.stop()
+
 
         # --- Model 1: Linear Regression ---
         lr = LinearRegression()
