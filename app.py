@@ -42,7 +42,8 @@ if ticker:
         X, y = np.array(X), np.array(y)
 
         # Ensure we have enough data for training
-        if len(X) > 0:
+        if len(X) > 10:
+
             # Split into train/test sets (80/20 split)
             X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=True, random_state=42)
 
