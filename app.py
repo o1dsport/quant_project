@@ -16,8 +16,8 @@ st.write("Compare multiple ML models on live stock data.")
 
 # Sidebar inputs
 ticker = st.sidebar.text_input("Ticker Symbol", value="AAPL")
-start_date = st.sidebar.date_input("Start date", value=date(2020,1,1))
-end_date   = st.sidebar.date_input("End date", value=date.today())
+start_date = st.sidebar.date_input("Start date", value=date(2020, 1, 1))
+end_date = st.sidebar.date_input("End date", value=date.today())
 
 # --- Fetch data ---
 if ticker:
@@ -32,36 +32,33 @@ if ticker:
         close_prices = data['Close'].values
         N = 10  # days used for prediction
         X, y = [], []
-        
+
         for i in range(len(close_prices) - N):
-            X.append(close_prices[i:i+N])
-            y.append(close_prices[i+N])
-        
-       X, y = np.array(X), np.array(y)
+            X.append(close_prices[i:i + N])
+            y.append(close_prices[i + N])
+
+        X, y = np.array(X), np.array(y)
 
         # ✅ Force shapes to be compatible with scikit-learn
         if X.ndim == 1:
             X = X.reshape(-1, 1)
         if y.ndim > 1:
             y = y.flatten()
-        
+
         # ✅ Check raw sample count after reshape
         if X.shape[0] < 30:
             st.error("❌ Not enough valid samples to build prediction models. Try a wider date range.")
             st.stop()
 
-        
         # --- Split data ---
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=0.2, shuffle=True, random_state=42
         )
-        
+
         # ✅ Final safety checks after split
         if X_train.size == 0 or y_train.size == 0 or X_test.size == 0 or y_test.size == 0:
             st.error("❌ Invalid train/test split — not enough usable data. Try another stock or longer range.")
             st.stop()
-        
-
 
         # --- Model 1: Linear Regression ---
         lr = LinearRegression()
@@ -94,7 +91,7 @@ if ticker:
 
         # --- Model 4: LSTM (Neural Network) ---
         X_train_lstm = X_train.reshape((X_train.shape[0], X_train.shape[1], 1))
-        X_test_lstm  = X_test.reshape((X_test.shape[0],  X_test.shape[1],  1))
+        X_test_lstm = X_test.reshape((X_test.shape[0], X_test.shape[1], 1))
 
         model = Sequential()
         model.add(LSTM(50, input_shape=(X_train_lstm.shape[1], 1)))
@@ -116,9 +113,9 @@ if ticker:
         st.subheader("Actual vs Predicted (test set)")
         results = pd.DataFrame({
             "Actual": y_test,
-            "LR":   pred_lr,
-            "RF":   pred_rf,
-            "GB":   pred_gb,
+            "LR": pred_lr,
+            "RF": pred_rf,
+            "GB": pred_gb,
             "LSTM": pred_lstm
         })
         st.line_chart(results)
