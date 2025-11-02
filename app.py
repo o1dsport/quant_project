@@ -37,12 +37,19 @@ if ticker:
             X.append(close_prices[i:i+N])
             y.append(close_prices[i+N])
         
-        X, y = np.array(X), np.array(y)
+       X, y = np.array(X), np.array(y)
+
+        # ✅ Force shapes to be compatible with scikit-learn
+        if X.ndim == 1:
+            X = X.reshape(-1, 1)
+        if y.ndim > 1:
+            y = y.flatten()
         
-        # ✅ Check raw sample count
+        # ✅ Check raw sample count after reshape
         if X.shape[0] < 30:
             st.error("❌ Not enough valid samples to build prediction models. Try a wider date range.")
             st.stop()
+
         
         # --- Split data ---
         X_train, X_test, y_train, y_test = train_test_split(
