@@ -9,7 +9,6 @@ from sklearn.metrics import r2_score, mean_squared_error
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 # --- UI Section ---
 st.set_page_config(page_title="Stock Prediction App", layout="wide")
@@ -127,9 +126,22 @@ if ticker:
         X = df[feature_columns]
         y = df['Target']
         
-        # Display features
+        # ✅ CRITICAL FIX: Force proper data types and shapes
+        X = X.astype(np.float64)
+        y = y.astype(np.float64)
+        
+        # Ensure proper shapes
+        if X.ndim != 2:
+            st.error(f"❌ X should be 2D but got shape {X.shape}")
+            st.stop()
+        if y.ndim != 1:
+            st.error(f"❌ y should be 1D but got shape {y.shape}")
+            st.stop()
+        
+        # Display features with shape info
         st.write(f"✅ Using {len(feature_columns)} technical indicators")
         st.write(f"✅ {len(X)} samples available for training")
+        st.write(f"✅ X shape: {X.shape}, y shape: {y.shape}")
         
         # Feature correlation
         corr_with_target = X.corrwith(y).abs().sort_values(ascending=False)
@@ -141,15 +153,23 @@ if ticker:
             X, y, test_size=0.2, shuffle=False, random_state=42
         )
         
+        # ✅ Additional validation after split
+        st.write(f"After split - X_train: {X_train.shape}, y_train: {y_train.shape}")
+        
+        if X_train.shape[0] == 0 or X_test.shape[0] == 0:
+            st.error("❌ Train/test split resulted in empty datasets.")
+            st.stop()
+        
         # Scale features
         scaler = StandardScaler()
         X_train_scaled = scaler.fit_transform(X_train)
         X_test_scaled = scaler.transform(X_test)
         
-        # Final validation
-        if len(X_train) == 0 or len(X_test) == 0:
-            st.error("❌ Invalid train/test split. Not enough data.")
-            st.stop()
+        # Convert to proper numpy arrays
+        X_train_scaled = np.array(X_train_scaled, dtype=np.float64)
+        X_test_scaled = np.array(X_test_scaled, dtype=np.float64)
+        y_train = np.array(y_train, dtype=np.float64)
+        y_test = np.array(y_test, dtype=np.float64)
 
         # --- Model Training and Evaluation ---
         st.subheader("🤖 Model Training & Evaluation")
@@ -163,15 +183,19 @@ if ticker:
             with st.spinner("Training Linear Regression..."):
                 try:
                     lr = LinearRegression()
-                    lr.fit(X_train_scaled, y_train)
-                    pred_lr = lr.predict(X_test_scaled)
-                    models['Linear Regression'] = lr
-                    predictions['Linear Regression'] = pred_lr
-                    scores['Linear Regression'] = {
-                        'R²': r2_score(y_test, pred_lr),
-                        'RMSE': np.sqrt(mean_squared_error(y_test, pred_lr))
-                    }
-                    st.success("✅ Linear Regression trained successfully")
+                    # Final shape check before fitting
+                    if X_train_scaled.ndim != 2 or y_train.ndim != 1:
+                        st.error(f"❌ Final shape check failed: X_train_scaled {X_train_scaled.shape}, y_train {y_train.shape}")
+                    else:
+                        lr.fit(X_train_scaled, y_train)
+                        pred_lr = lr.predict(X_test_scaled)
+                        models['Linear Regression'] = lr
+                        predictions['Linear Regression'] = pred_lr
+                        scores['Linear Regression'] = {
+                            'R²': r2_score(y_test, pred_lr),
+                            'RMSE': np.sqrt(mean_squared_error(y_test, pred_lr))
+                        }
+                        st.success("✅ Linear Regression trained successfully")
                 except Exception as e:
                     st.error(f"❌ Linear Regression failed: {str(e)}")
         
