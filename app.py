@@ -5,7 +5,7 @@ import numpy as np
 from datetime import date
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.metrics import r2_score, mean_squared_error
+from sklearn.metrics import r2_score
 from sklearn.model_selection import train_test_split
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense
@@ -26,28 +26,30 @@ if ticker:
         st.warning("No data found. Check the ticker symbol or date range.")
     else:
         st.subheader(f"Data for {ticker} from {start_date} to {end_date}")
-        st.line_chart(data['Close'])  # Plot closing price
+        st.line_chart(data['Close'])
 
         # --- Prepare data ---
         close_prices = data['Close'].values
-        N = 10  # days used for prediction
+        N = 10  # Number of days used as input
+
         X, y = [], []
-
         for i in range(len(close_prices) - N):
-            X.append(close_prices[i:i + N])
-            y.append(close_prices[i + N])
+            X.append(close_prices[i:i+N])      # (N,)
+            y.append(close_prices[i+N])        # next value
 
-        X, y = np.array(X), np.array(y)
+        X = np.array(X)                        # (samples, N)
+        y = np.array(y)                        # (samples,)
 
-        # ✅ Force shapes to be compatible with scikit-learn
-        if X.ndim == 1:
-            X = X.reshape(-1, 1)
-        if y.ndim > 1:
+        # ✅ Confirm correct shapes
+        if X.ndim != 2:
+            st.error(f"❌ X shape is invalid: {X.shape}. Expected (samples, features).")
+            st.stop()
+        if y.ndim != 1:
             y = y.flatten()
 
-        # ✅ Check raw sample count after reshape
-        if X.shape[0] < 30:
-            st.error("❌ Not enough valid samples to build prediction models. Try a wider date range.")
+        # ✅ Sanity check
+        if X.shape[0] < 30 or X.shape[0] != y.shape[0]:
+            st.error("❌ Not enough or mismatched data for training. Try a wider date range.")
             st.stop()
 
         # --- Split data ---
@@ -55,24 +57,12 @@ if ticker:
             X, y, test_size=0.2, shuffle=True, random_state=42
         )
 
-        # ✅ Final safety checks after split
-        if X_train.size == 0 or y_train.size == 0 or X_test.size == 0 or y_test.size == 0:
-            st.error("❌ Invalid train/test split — not enough usable data. Try another stock or longer range.")
+        if X_train.size == 0 or y_train.size == 0:
+            st.error("❌ Train/test split failed. Try a wider date range.")
             st.stop()
 
         # --- Model 1: Linear Regression ---
         lr = LinearRegression()
-        st.write(f"Shape of X_train: {X_train.shape}")
-        st.write(f"Shape of y_train: {y_train.shape}")
-
-        # ✅ Final check: shape and dimension validation
-        if X_train.ndim != 2 or y_train.ndim != 1:
-            st.error("❌ Invalid data shape for training. X must be 2D, y must be 1D.")
-            st.stop()
-        if X_train.shape[0] != y_train.shape[0]:
-            st.error("❌ Mismatch between number of X and y samples.")
-            st.stop()
-
         lr.fit(X_train, y_train)
         pred_lr = lr.predict(X_test)
         r2_lr = r2_score(y_test, pred_lr)
@@ -89,7 +79,7 @@ if ticker:
         pred_gb = gb.predict(X_test)
         r2_gb = r2_score(y_test, pred_gb)
 
-        # --- Model 4: LSTM (Neural Network) ---
+        # --- Model 4: LSTM ---
         X_train_lstm = X_train.reshape((X_train.shape[0], X_train.shape[1], 1))
         X_test_lstm = X_test.reshape((X_test.shape[0], X_test.shape[1], 1))
 
@@ -104,7 +94,7 @@ if ticker:
         # --- Results Table ---
         st.subheader("Model Performance (R² scores)")
         scores_df = pd.DataFrame({
-            "Model": ["Linear Reg", "Random Forest", "GradientBoosting", "LSTM"],
+            "Model": ["Linear Reg", "Random Forest", "Gradient Boosting", "LSTM"],
             "R² Score": [r2_lr, r2_rf, r2_gb, r2_lstm]
         })
         st.table(scores_df)
