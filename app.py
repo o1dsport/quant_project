@@ -2,13 +2,14 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-from datetime import date
+from datetime import date, timedelta
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.metrics import r2_score, mean_squared_error
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 import plotly.graph_objects as go
+import time
 
 # --- UI Section ---
 st.set_page_config(page_title="Stock Prediction App", layout="wide")
@@ -31,31 +32,68 @@ use_gb = st.sidebar.checkbox("Gradient Boosting", value=True)
 @st.cache_data
 def load_data(ticker, start, end):
     try:
-        data = yf.download(ticker, start=start, end=end, auto_adjust=True)
+        # Add delay to avoid rate limiting
+        time.sleep(1)
+        data = yf.download(ticker, start=start, end=end, auto_adjust=True, progress=False)
         if data.empty:
             return None, "No data found for the given ticker and date range."
         return data, None
     except Exception as e:
         return None, f"Error downloading data: {str(e)}"
 
+def create_features(df):
+    """Create technical indicators with proper error handling"""
+    df = df.copy()
+    
+    try:
+        # Simple moving averages
+        df['SMA_10'] = df['Close'].rolling(window=10).mean()
+        df['SMA_30'] = df['Close'].rolling(window=30).mean()
+        
+        # RSI
+        delta = df['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        df['RSI'] = 100 - (100 / (1 + rs))
+        
+        # Price changes
+        df['Price_Change_1'] = df['Close'].pct_change(1)
+        df['Price_Change_5'] = df['Close'].pct_change(5)
+        df['Price_Change_10'] = df['Close'].pct_change(10)
+        
+        # Volume features
+        df['Volume_Change'] = df['Volume'].pct_change()
+        df['Volume_SMA'] = df['Volume'].rolling(window=10).mean()
+        
+        # High-Low features
+        df['High_Low_Range'] = (df['High'] - df['Low']) / df['Close']
+        df['Close_Open_Range'] = (df['Close'] - df['Open']) / df['Open']
+        
+    except Exception as e:
+        st.warning(f"Some features couldn't be created: {str(e)}")
+    
+    return df
+
 if ticker:
-    data, error = load_data(ticker, start_date, end_date)
+    with st.spinner("Downloading stock data..."):
+        data, error = load_data(ticker, start_date, end_date)
     
     if error:
         st.error(f"❌ {error}")
+        st.info("💡 Try using a different ticker or wait a few minutes before trying again.")
     else:
         st.subheader(f"📊 Data for {ticker} from {start_date} to {end_date}")
         
-        # ✅ FIX: Check if data is valid before accessing
+        # Check if data is valid
         if data is None or len(data) == 0:
             st.error("❌ No data available after download.")
             st.stop()
         
-        # ✅ FIX: Safe data access - extract scalar values
+        # Safe data access
         try:
             current_price = data['Close'].iloc[-1]
             initial_price = data['Close'].iloc[0]
-            # Convert to float safely
             current_price_float = float(current_price)
             initial_price_float = float(initial_price)
         except (KeyError, IndexError) as e:
@@ -89,40 +127,8 @@ if ticker:
         # --- Prepare features ---
         st.subheader("🔧 Feature Engineering")
         
-        # Create technical indicators
-        df = data.copy()
-        
-        # Simple moving averages
-        df['SMA_10'] = df['Close'].rolling(window=10).mean()
-        df['SMA_30'] = df['Close'].rolling(window=30).mean()
-        
-        # RSI
-        delta = df['Close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
-        df['RSI'] = 100 - (100 / (1 + rs))
-        
-        # MACD
-        exp1 = df['Close'].ewm(span=12).mean()
-        exp2 = df['Close'].ewm(span=26).mean()
-        df['MACD'] = exp1 - exp2
-        df['MACD_Signal'] = df['MACD'].ewm(span=9).mean()
-        
-        # ✅ FIXED Bollinger Bands - ensure we're working with Series, not DataFrames
-        df['BB_Middle'] = df['Close'].rolling(window=20).mean()
-        # Convert to Series explicitly
-        bb_std = df['Close'].rolling(window=20).std()
-        df['BB_Upper'] = df['BB_Middle'] + (bb_std * 2)
-        df['BB_Lower'] = df['BB_Middle'] - (bb_std * 2)
-        
-        # Price momentum
-        df['Momentum'] = df['Close'] - df['Close'].shift(5)
-        df['Price_Rate_Of_Change'] = (df['Close'] - df['Close'].shift(10)) / df['Close'].shift(10)
-        
-        # Volume features
-        df['Volume_SMA'] = df['Volume'].rolling(window=10).mean()
-        df['Volume_Rate_Of_Change'] = (df['Volume'] - df['Volume'].shift(5)) / df['Volume'].shift(5)
+        with st.spinner("Creating technical indicators..."):
+            df = create_features(data)
         
         # Drop NaN values
         df = df.dropna()
@@ -131,32 +137,34 @@ if ticker:
             st.error("❌ Not enough data after feature engineering. Try a wider date range.")
             st.stop()
         
-        # Feature selection
-        feature_columns = ['SMA_10', 'SMA_30', 'RSI', 'MACD', 'MACD_Signal', 
-                          'BB_Upper', 'BB_Lower', 'BB_Middle', 'Momentum', 
-                          'Price_Rate_Of_Change', 'Volume_SMA', 'Volume_Rate_Of_Change']
+        # Feature selection (simpler set to avoid issues)
+        feature_columns = [
+            'SMA_10', 'SMA_30', 'RSI', 
+            'Price_Change_1', 'Price_Change_5', 'Price_Change_10',
+            'Volume_Change', 'Volume_SMA',
+            'High_Low_Range', 'Close_Open_Range'
+        ]
+        
+        # Only use features that exist in the dataframe
+        available_features = [col for col in feature_columns if col in df.columns]
+        
+        if len(available_features) < 5:
+            st.error("❌ Not enough features available for training.")
+            st.stop()
         
         # Target variable: Next day's closing price
         df['Target'] = df['Close'].shift(-1)
         df = df.dropna()
         
-        X = df[feature_columns]
+        X = df[available_features]
         y = df['Target']
         
-        # ✅ CRITICAL FIX: Force proper data types and shapes
+        # Ensure proper data types
         X = X.astype(np.float64)
         y = y.astype(np.float64)
         
-        # Ensure proper shapes
-        if X.ndim != 2:
-            st.error(f"❌ X should be 2D but got shape {X.shape}")
-            st.stop()
-        if y.ndim != 1:
-            st.error(f"❌ y should be 1D but got shape {y.shape}")
-            st.stop()
-        
         # Display features with shape info
-        st.write(f"✅ Using {len(feature_columns)} technical indicators")
+        st.write(f"✅ Using {len(available_features)} technical indicators")
         st.write(f"✅ {len(X)} samples available for training")
         st.write(f"✅ X shape: {X.shape}, y shape: {y.shape}")
         
@@ -170,9 +178,7 @@ if ticker:
             X, y, test_size=0.2, shuffle=False, random_state=42
         )
         
-        # ✅ Additional validation after split
-        st.write(f"After split - X_train: {X_train.shape}, y_train: {y_train.shape}")
-        
+        # Additional validation after split
         if X_train.shape[0] == 0 or X_test.shape[0] == 0:
             st.error("❌ Train/test split resulted in empty datasets.")
             st.stop()
@@ -200,19 +206,15 @@ if ticker:
             with st.spinner("Training Linear Regression..."):
                 try:
                     lr = LinearRegression()
-                    # Final shape check before fitting
-                    if X_train_scaled.ndim != 2 or y_train.ndim != 1:
-                        st.error(f"❌ Final shape check failed: X_train_scaled {X_train_scaled.shape}, y_train {y_train.shape}")
-                    else:
-                        lr.fit(X_train_scaled, y_train)
-                        pred_lr = lr.predict(X_test_scaled)
-                        models['Linear Regression'] = lr
-                        predictions['Linear Regression'] = pred_lr
-                        scores['Linear Regression'] = {
-                            'R²': r2_score(y_test, pred_lr),
-                            'RMSE': np.sqrt(mean_squared_error(y_test, pred_lr))
-                        }
-                        st.success("✅ Linear Regression trained successfully")
+                    lr.fit(X_train_scaled, y_train)
+                    pred_lr = lr.predict(X_test_scaled)
+                    models['Linear Regression'] = lr
+                    predictions['Linear Regression'] = pred_lr
+                    scores['Linear Regression'] = {
+                        'R²': r2_score(y_test, pred_lr),
+                        'RMSE': np.sqrt(mean_squared_error(y_test, pred_lr))
+                    }
+                    st.success("✅ Linear Regression trained successfully")
                 except Exception as e:
                     st.error(f"❌ Linear Regression failed: {str(e)}")
         
@@ -220,7 +222,7 @@ if ticker:
         if use_rf:
             with st.spinner("Training Random Forest..."):
                 try:
-                    rf = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
+                    rf = RandomForestRegressor(n_estimators=50, random_state=42, n_jobs=-1)
                     rf.fit(X_train_scaled, y_train)
                     pred_rf = rf.predict(X_test_scaled)
                     models['Random Forest'] = rf
@@ -237,7 +239,7 @@ if ticker:
         if use_gb:
             with st.spinner("Training Gradient Boosting..."):
                 try:
-                    gb = GradientBoostingRegressor(n_estimators=100, random_state=42)
+                    gb = GradientBoostingRegressor(n_estimators=50, random_state=42)
                     gb.fit(X_train_scaled, y_train)
                     pred_gb = gb.predict(X_test_scaled)
                     models['Gradient Boosting'] = gb
@@ -316,7 +318,7 @@ if ticker:
         
         if 'Random Forest' in models:
             feature_importance = pd.DataFrame({
-                'feature': feature_columns,
+                'feature': available_features,
                 'importance': models['Random Forest'].feature_importances_
             }).sort_values('importance', ascending=False)
             
@@ -338,35 +340,42 @@ if ticker:
         # --- Next Day Prediction ---
         st.subheader("🔮 Next Day Prediction")
         
-        # Use the most recent data for prediction
-        latest_features = df[feature_columns].iloc[-1:].values
-        latest_features_scaled = scaler.transform(latest_features)
-        
-        next_day_predictions = {}
-        for model_name, model in models.items():
-            pred = model.predict(latest_features_scaled)[0]
-            next_day_predictions[model_name] = float(pred)
-        
-        current_price_pred = float(df['Close'].iloc[-1])
-        
-        pred_cols = st.columns(len(next_day_predictions))
-        for i, (model_name, pred_price) in enumerate(next_day_predictions.items()):
-            with pred_cols[i]:
-                change = pred_price - current_price_pred
-                pct_change = (change / current_price_pred) * 100
-                
-                st.metric(
-                    label=model_name,
-                    value=f"${pred_price:.2f}",
-                    delta=f"{change:.2f} ({pct_change:.2f}%)"
-                )
+        try:
+            # Use the most recent data for prediction
+            latest_features = df[available_features].iloc[-1:].values
+            latest_features_scaled = scaler.transform(latest_features)
+            
+            next_day_predictions = {}
+            for model_name, model in models.items():
+                pred = model.predict(latest_features_scaled)[0]
+                next_day_predictions[model_name] = float(pred)
+            
+            current_price_pred = float(df['Close'].iloc[-1])
+            
+            pred_cols = st.columns(len(next_day_predictions))
+            for i, (model_name, pred_price) in enumerate(next_day_predictions.items()):
+                with pred_cols[i]:
+                    change = pred_price - current_price_pred
+                    pct_change = (change / current_price_pred) * 100
+                    
+                    st.metric(
+                        label=model_name,
+                        value=f"${pred_price:.2f}",
+                        delta=f"{change:.2f} ({pct_change:.2f}%)"
+                    )
+        except Exception as e:
+            st.warning(f"Could not generate next day prediction: {str(e)}")
 
 else:
     st.info("👈 Please enter a stock ticker symbol in the sidebar to get started.")
 
 st.sidebar.markdown("---")
 st.sidebar.info(
-    "This app uses machine learning models to predict stock prices. "
-    "Past performance is not indicative of future results. "
-    "Use for educational purposes only."
+    "💡 **Tips:**\n"
+    "- Try popular tickers like AAPL, TSLA, GOOGL, MSFT\n"
+    "- Use longer date ranges for better results\n"
+    "- If you get rate limited, wait a few minutes and try again\n"
+    "\n"
+    "⚠️ **Disclaimer:** This is for educational purposes only.\n"
+    "Past performance is not indicative of future results."
 )
