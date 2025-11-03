@@ -53,8 +53,11 @@ if ticker:
         
         # ✅ FIX: Safe data access - extract scalar values
         try:
-            current_price = float(data['Close'].iloc[-1])
-            initial_price = float(data['Close'].iloc[0])
+            current_price = data['Close'].iloc[-1]
+            initial_price = data['Close'].iloc[0]
+            # Convert to float safely
+            current_price_float = float(current_price)
+            initial_price_float = float(initial_price)
         except (KeyError, IndexError) as e:
             st.error(f"❌ Error accessing price data: {str(e)}")
             st.stop()
@@ -62,12 +65,12 @@ if ticker:
         # Display basic statistics
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("Current Price", f"${current_price:.2f}")
+            st.metric("Current Price", f"${current_price_float:.2f}")
         with col2:
-            change = current_price - initial_price
+            change = current_price_float - initial_price_float
             st.metric("Total Change", f"${change:.2f}")
         with col3:
-            pct_change = (change / initial_price) * 100
+            pct_change = (change / initial_price_float) * 100
             st.metric("Total Return", f"{pct_change:.2f}%")
         with col4:
             st.metric("Data Points", len(data))
@@ -106,8 +109,9 @@ if ticker:
         df['MACD'] = exp1 - exp2
         df['MACD_Signal'] = df['MACD'].ewm(span=9).mean()
         
-        # Bollinger Bands
+        # ✅ FIXED Bollinger Bands - ensure we're working with Series, not DataFrames
         df['BB_Middle'] = df['Close'].rolling(window=20).mean()
+        # Convert to Series explicitly
         bb_std = df['Close'].rolling(window=20).std()
         df['BB_Upper'] = df['BB_Middle'] + (bb_std * 2)
         df['BB_Lower'] = df['BB_Middle'] - (bb_std * 2)
@@ -340,7 +344,8 @@ if ticker:
         
         next_day_predictions = {}
         for model_name, model in models.items():
-            next_day_predictions[model_name] = float(model.predict(latest_features_scaled)[0])
+            pred = model.predict(latest_features_scaled)[0]
+            next_day_predictions[model_name] = float(pred)
         
         current_price_pred = float(df['Close'].iloc[-1])
         
