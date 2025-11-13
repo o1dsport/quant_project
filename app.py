@@ -1,334 +1,174 @@
 import streamlit as st
-import yfinance as yf
-import pandas as pd
 import numpy as np
-from datetime import date, timedelta, datetime
-from sklearn.linear_model import LinearRegression
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.metrics import r2_score, mean_squared_error
+import pandas as pd
+import yfinance as yf
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import mean_squared_error, r2_score, confusion_matrix
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-import plotly.graph_objects as go
-import time
-import requests
-import io
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import GradientBoostingRegressor
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Dropout
+from tensorflow.keras.callbacks import EarlyStopping
+from datetime import date, timedelta
+import warnings
+warnings.filterwarnings("ignore")
 
-# --- UI Section ---
-st.set_page_config(page_title="Stock Prediction App", layout="wide")
-st.title("📈 Quantitative Stock Market Prediction App")
-st.write("Compare multiple ML models on live stock data.")
 
-# Sidebar inputs
-st.sidebar.header("Input Parameters")
-ticker = st.sidebar.text_input("Ticker Symbol", value="AAPL")
-start_date = st.sidebar.date_input("Start date", value=date(2020, 1, 1))
-end_date = st.sidebar.date_input("End date", value=date.today())
+st.set_page_config(page_title="Stock Market Predictor", layout="wide")
+st.title("Stock Market Prediction")
+st.markdown("Compare **Linear Regression**, **Gradient Boosting**, and **LSTM** models on real market data.")
 
-# Model selection
-st.sidebar.header("Model Selection")
-use_lr = st.sidebar.checkbox("Linear Regression", value=True)
-use_rf = st.sidebar.checkbox("Random Forest", value=True)
-use_gb = st.sidebar.checkbox("Gradient Boosting", value=True)
 
-# --- Alternative data sources and fallbacks ---
-def get_sample_data():
-    """Provide sample data when live data fails"""
-    dates = pd.date_range(start='2020-01-01', end=date.today(), freq='D')
-    np.random.seed(42)
-    
-    # Generate realistic sample data
-    price = 100 + np.cumsum(np.random.normal(0, 2, len(dates)))
-    volume = np.random.randint(1000000, 50000000, len(dates))
-    
-    sample_data = pd.DataFrame({
-        'Open': price * 0.99,
-        'High': price * 1.02,
-        'Low': price * 0.98,
-        'Close': price,
-        'Volume': volume
-    }, index=dates)
-    
-    return sample_data
+def directional_accuracy(y_true, y_pred):
+    """Compute direction (up/down) match % and confusion matrix safely"""
+    y_true, y_pred = np.array(y_true).flatten(), np.array(y_pred).flatten()
+    if len(y_true) != len(y_pred) or len(y_true) < 2:
+        return 0.0, np.zeros((2, 2), dtype=int)
+    actual_dir = np.sign(np.diff(y_true))
+    pred_dir = np.sign(np.diff(y_pred))
+    acc = np.sum(actual_dir == pred_dir) / len(actual_dir) * 100
+    cm = confusion_matrix(actual_dir > 0, pred_dir > 0, labels=[False, True])
+    return acc, cm
 
-def load_data_robust(ticker, start, end):
-    """Robust data loading with multiple fallbacks"""
-    try:
-        # Try yfinance first
-        time.sleep(2)  # Rate limiting protection
-        data = yf.download(ticker, start=start, end=end, auto_adjust=True, progress=False)
-        
-        if not data.empty:
-            return data, None
-        
-        # If yfinance fails, try Alpha Vantage (free tier)
-        st.warning("📡 Trying alternative data source...")
-        return load_data_alphavantage(ticker)
-        
-    except Exception as e:
-        st.warning("🚨 Using sample data for demonstration")
-        sample_data = get_sample_data()
-        return sample_data, f"Live data unavailable. Using sample data. Error: {str(e)}"
 
-def load_data_alphavantage(ticker):
-    """Try Alpha Vantage as backup"""
-    try:
-        # You can get a free API key from https://www.alphavantage.co/support/#api-key
-        api_key = "demo"  # Free demo key (limited)
-        url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={ticker}&apikey={api_key}&datatype=csv"
-        
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            data = pd.read_csv(io.StringIO(response.text))
-            if not data.empty:
-                data['timestamp'] = pd.to_datetime(data['timestamp'])
-                data.set_index('timestamp', inplace=True)
-                data = data.rename(columns={
-                    'open': 'Open', 'high': 'High', 'low': 'Low', 
-                    'close': 'Close', 'volume': 'Volume'
-                })
-                return data, None
-    except:
-        pass
-    
-    # Final fallback to sample data
-    return get_sample_data(), "Using sample data for demonstration"
+symbol = st.text_input("Enter Stock Symbol (e.g. AAPL, TSLA, INFY.NS):", "RELIANCE.NS")
+start_date = st.date_input("Start Date", date(2015, 1, 1))
+end_date = st.date_input("End Date", date.today())
+future_days = st.slider("Forecast next N days", 1, 30, 4)
 
-# --- Feature Engineering ---
-def create_simple_features(df):
-    """Create basic technical indicators"""
-    df = df.copy()
-    
-    # Price-based features
-    df['Returns_1'] = df['Close'].pct_change(1)
-    df['Returns_5'] = df['Close'].pct_change(5)
-    df['Returns_10'] = df['Close'].pct_change(10)
-    
-    # Rolling statistics
-    df['SMA_10'] = df['Close'].rolling(window=10).mean()
-    df['SMA_20'] = df['Close'].rolling(window=20).mean()
-    df['Volatility_10'] = df['Returns_1'].rolling(window=10).std()
-    
-    # Volume features
-    df['Volume_SMA'] = df['Volume'].rolling(window=10).mean()
-    df['Volume_Rate'] = df['Volume'] / df['Volume_SMA']
-    
-    # Price position features
-    df['High_Low_Ratio'] = (df['High'] - df['Low']) / df['Close']
-    df['Close_Open_Ratio'] = (df['Close'] - df['Open']) / df['Open']
-    
-    return df
+if st.button("Train & Predict"):
+    with st.spinner("Downloading data and training models..."):
+        df = yf.download(symbol, start=start_date, end=end_date)
+        if df.empty:
+            st.error("No data found for that symbol.")
+            st.stop()
 
-# --- Main Application Logic ---
-if ticker:
-    with st.spinner("🔄 Loading stock data..."):
-        data, warning_msg = load_data_robust(ticker, start_date, end_date)
-    
-    if warning_msg:
-        st.warning(warning_msg)
-    
-    st.subheader(f"📊 Data for {ticker} from {start_date} to {end_date}")
-    
-    # Safe data access
-    try:
-        current_price = float(data['Close'].iloc[-1])
-        initial_price = float(data['Close'].iloc[0])
-    except (KeyError, IndexError) as e:
-        st.error(f"❌ Error accessing price data: {str(e)}")
-        st.stop()
-    
-    # Display basic statistics
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Current Price", f"${current_price:.2f}")
-    with col2:
-        change = current_price - initial_price
-        st.metric("Total Change", f"${change:.2f}")
-    with col3:
-        pct_change = (change / initial_price) * 100
-        st.metric("Total Return", f"{pct_change:.2f}%")
-    with col4:
-        st.metric("Data Points", len(data))
+        df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
+        df['Return'] = df['Close'].pct_change()
+        df.dropna(inplace=True)
 
-    # Price chart
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=data.index, y=data['Close'], 
-                           mode='lines', name='Close Price',
-                           line=dict(color='#1f77b4')))
-    fig.update_layout(title=f"{ticker} Stock Price",
-                     xaxis_title="Date",
-                     yaxis_title="Price ($)",
-                     height=400)
-    st.plotly_chart(fig, use_container_width=True)
+        X = df[['Open', 'High', 'Low', 'Volume', 'Return']]
+        y = df['Close']
 
-    # --- Feature Engineering ---
-    st.subheader("🔧 Feature Engineering")
-    
-    with st.spinner("Creating features..."):
-        df = create_simple_features(data)
-    
-    # Drop NaN values
-    df = df.dropna()
-    
-    if len(df) < 30:
-        st.error("❌ Not enough data for training. Try a wider date range.")
-        st.stop()
-    
-    # Feature selection
-    feature_columns = [
-        'Returns_1', 'Returns_5', 'Returns_10',
-        'SMA_10', 'SMA_20', 'Volatility_10',
-        'Volume_Rate', 'High_Low_Ratio', 'Close_Open_Ratio'
-    ]
-    
-    # Only use features that exist
-    available_features = [col for col in feature_columns if col in df.columns]
-    
-    if len(available_features) < 3:
-        st.error("❌ Not enough features available for training.")
-        st.stop()
-    
-    # Target: Next day's closing price
-    df['Target'] = df['Close'].shift(-1)
-    df = df.dropna()
-    
-    X = df[available_features]
-    y = df['Target']
-    
-    st.write(f"✅ Using {len(available_features)} features")
-    st.write(f"✅ {len(X)} samples available")
-    st.write(f"📊 Feature matrix shape: {X.shape}")
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
 
-    # --- Model Training ---
-    st.subheader("🤖 Model Training & Evaluation")
-    
-    # Split data
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, shuffle=False, random_state=42
-    )
-    
-    # Scale features
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
-    
-    models = {}
-    predictions = {}
-    scores = {}
-    
-    # Linear Regression
-    if use_lr:
-        with st.spinner("Training Linear Regression..."):
-            try:
-                lr = LinearRegression()
-                lr.fit(X_train_scaled, y_train)
-                pred_lr = lr.predict(X_test_scaled)
-                models['Linear Regression'] = lr
-                predictions['Linear Regression'] = pred_lr
-                scores['Linear Regression'] = {
-                    'R²': r2_score(y_test, pred_lr),
-                    'RMSE': np.sqrt(mean_squared_error(y_test, pred_lr))
-                }
-                st.success("✅ Linear Regression trained")
-            except Exception as e:
-                st.error(f"❌ Linear Regression failed: {str(e)}")
-    
-    # Random Forest
-    if use_rf:
-        with st.spinner("Training Random Forest..."):
-            try:
-                rf = RandomForestRegressor(n_estimators=50, random_state=42)
-                rf.fit(X_train_scaled, y_train)
-                pred_rf = rf.predict(X_test_scaled)
-                models['Random Forest'] = rf
-                predictions['Random Forest'] = pred_rf
-                scores['Random Forest'] = {
-                    'R²': r2_score(y_test, pred_rf),
-                    'RMSE': np.sqrt(mean_squared_error(y_test, pred_rf))
-                }
-                st.success("✅ Random Forest trained")
-            except Exception as e:
-                st.error(f"❌ Random Forest failed: {str(e)}")
-    
-    # Gradient Boosting
-    if use_gb:
-        with st.spinner("Training Gradient Boosting..."):
-            try:
-                gb = GradientBoostingRegressor(n_estimators=50, random_state=42)
-                gb.fit(X_train_scaled, y_train)
-                pred_gb = gb.predict(X_test_scaled)
-                models['Gradient Boosting'] = gb
-                predictions['Gradient Boosting'] = pred_gb
-                scores['Gradient Boosting'] = {
-                    'R²': r2_score(y_test, pred_gb),
-                    'RMSE': np.sqrt(mean_squared_error(y_test, pred_gb))
-                }
-                st.success("✅ Gradient Boosting trained")
-            except Exception as e:
-                st.error(f"❌ Gradient Boosting failed: {str(e)}")
-    
-    if not models:
-        st.error("❌ No models trained successfully")
-        st.stop()
-    
-    # --- Results ---
-    st.subheader("📊 Model Performance")
-    
-    results_df = pd.DataFrame(scores).T
-    results_df['R²'] = results_df['R²'].round(4)
-    results_df['RMSE'] = results_df['RMSE'].round(2)
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.write("**Performance Metrics:**")
-        st.dataframe(results_df)
-    
-    with col2:
-        best_model = results_df['R²'].idxmax()
-        st.metric("🏆 Best Model", best_model)
-        st.metric("Best R²", f"{results_df.loc[best_model, 'R²']:.4f}")
-    
-    # Predictions chart
-    st.subheader("📈 Predictions vs Actual")
-    fig_pred = go.Figure()
-    fig_pred.add_trace(go.Scatter(
-        x=df.index[-len(y_test):], y=y_test,
-        mode='lines', name='Actual', line=dict(color='black', width=2)
-    ))
-    
-    colors = ['#1f77b4', '#ff7f0e', '#2ca02c']
-    for i, (name, pred) in enumerate(predictions.items()):
-        fig_pred.add_trace(go.Scatter(
-            x=df.index[-len(y_test):], y=pred,
-            mode='lines', name=f'{name} Pred', line=dict(color=colors[i], width=1.5)
-        ))
-    
-    fig_pred.update_layout(height=400, title="Model Predictions")
-    st.plotly_chart(fig_pred, use_container_width=True)
-    
-    # Feature Importance
-    if 'Random Forest' in models:
-        st.subheader("🔍 Feature Importance")
-        importance_df = pd.DataFrame({
-            'feature': available_features,
-            'importance': models['Random Forest'].feature_importances_
-        }).sort_values('importance', ascending=True)
-        
-        fig_imp = go.Figure(go.Bar(
-            x=importance_df['importance'],
-            y=importance_df['feature'],
-            orientation='h'
-        ))
-        fig_imp.update_layout(height=300, title="Random Forest Feature Importance")
-        st.plotly_chart(fig_imp, use_container_width=True)
 
-else:
-    st.info("👈 Enter a stock ticker to get started")
+        lr = LinearRegression()
+        lr.fit(X_train, y_train)
+        lr_preds = lr.predict(X_test)
+        lr_mse = mean_squared_error(y_test, lr_preds)
+        lr_r2 = r2_score(y_test, lr_preds)
+        lr_acc, lr_cm = directional_accuracy(y_test, lr_preds)
 
-st.sidebar.markdown("---")
-st.sidebar.info(
-    "💡 **Tips:**\n"
-    "- Try: AAPL, TSLA, GOOGL, MSFT\n" 
-    "- Use wider date ranges\n"
-    "- App uses fallback data if live data fails\n"
-    "\n⚠️ **Educational use only**"
-)
+
+        gb = GradientBoostingRegressor(
+            n_estimators=500, learning_rate=0.05, max_depth=4, random_state=42
+        )
+        gb.fit(X_train, y_train)
+        gb_preds = gb.predict(X_test)
+        gb_mse = mean_squared_error(y_test, gb_preds)
+        gb_r2 = r2_score(y_test, gb_preds)
+        gb_acc, gb_cm = directional_accuracy(y_test, gb_preds)
+
+
+        scaler = MinMaxScaler()
+        scaled = scaler.fit_transform(df[['Close']])
+
+        lookback = 60
+        X_lstm, y_lstm = [], []
+        for i in range(lookback, len(scaled)):
+            X_lstm.append(scaled[i-lookback:i])
+            y_lstm.append(scaled[i])
+        X_lstm, y_lstm = np.array(X_lstm), np.array(y_lstm)
+
+        split = int(len(X_lstm) * 0.8)
+        X_train_lstm, X_test_lstm = X_lstm[:split], X_lstm[split:]
+        y_train_lstm, y_test_lstm = y_lstm[:split], y_lstm[split:]
+
+        model = Sequential([
+            LSTM(64, return_sequences=True, input_shape=(lookback, 1)),
+            Dropout(0.2),
+            LSTM(32, return_sequences=False),
+            Dense(25, activation='relu'),
+            Dense(1)
+        ])
+        model.compile(optimizer='adam', loss='mean_squared_error')
+        es = EarlyStopping(monitor='loss', patience=3, restore_best_weights=True)
+        model.fit(X_train_lstm, y_train_lstm, epochs=10, batch_size=32, verbose=0, callbacks=[es])
+
+        lstm_preds = model.predict(X_test_lstm)
+        lstm_preds = scaler.inverse_transform(lstm_preds)
+        actual_prices = scaler.inverse_transform(y_test_lstm)
+
+        lstm_mse = mean_squared_error(actual_prices, lstm_preds)
+        lstm_r2 = r2_score(actual_prices, lstm_preds)
+        lstm_acc, lstm_cm = directional_accuracy(actual_prices, lstm_preds)
+
+
+        st.subheader("Model Performance Metrics")
+        # R² can be negative on test data; clip at 0 for display to avoid confusion
+        r2_display = [max(lr_r2, 0.0), max(gb_r2, 0.0), max(lstm_r2, 0.0)]
+        metrics = pd.DataFrame({
+            "Model": ["Linear Regression", "Gradient Boosting", "LSTM"],
+            "MSE": [lr_mse, gb_mse, lstm_mse],
+            "R² Score (clipped ≥ 0)": r2_display,
+            "Directional Accuracy (%)": [lr_acc, gb_acc, lstm_acc]
+        })
+
+        st.dataframe(metrics.style.highlight_max(
+            subset=["R² Score (clipped ≥ 0)", "Directional Accuracy (%)"], color="lightgreen"))
+
+
+
+        st.subheader("Actual vs Predicted Prices (Test Set)")
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.plot(y_test.values, label="Actual", color='black', linewidth=2)
+        ax.plot(lr_preds, label="Linear Regression", color='blue')
+        ax.plot(gb_preds, label="Gradient Boosting", color='orange')
+        ax.plot(np.linspace(0, len(y_test), len(lstm_preds)), lstm_preds, label="LSTM", color='green')
+        ax.legend()
+        st.pyplot(fig)
+
+
+        st.subheader("Confusion Matrices (Up/Down Prediction)")
+        col1, col2, col3 = st.columns(3)
+        for c, cm, name, cmap in zip(
+            [col1, col2, col3],
+            [lr_cm, gb_cm, lstm_cm],
+            ["Linear Regression", "Gradient Boosting", "LSTM"],
+            ["Blues", "Oranges", "Greens"]
+        ):
+            with c:
+                st.write(f"**{name}**")
+                fig_cm, ax_cm = plt.subplots()
+                sns.heatmap(cm, annot=True, fmt='d', cmap=cmap, xticklabels=["Down", "Up"], yticklabels=["Down", "Up"])
+                ax_cm.set_xlabel("Predicted")
+                ax_cm.set_ylabel("Actual")
+                st.pyplot(fig_cm)
+
+
+        st.subheader(f"{symbol} - Future {future_days}-Day Forecast")
+        last_seq = scaled[-lookback:]
+        future_preds = []
+        seq = last_seq.copy()
+
+        for _ in range(future_days):
+            pred = model.predict(seq.reshape(1, lookback, 1))
+            future_preds.append(pred[0][0])
+            seq = np.append(seq[1:], pred, axis=0)
+
+        future_prices = scaler.inverse_transform(np.array(future_preds).reshape(-1, 1))
+        future_dates = [df.index[-1] + timedelta(days=i+1) for i in range(future_days)]
+        forecast_df = pd.DataFrame({"Date": future_dates, "Predicted Close": future_prices.flatten()})
+        st.dataframe(forecast_df)
+
+        fig_fut, ax_fut = plt.subplots(figsize=(10, 6))
+        ax_fut.plot(df.index[-100:], df["Close"].tail(100), label="Recent Actual", color="blue")
+        ax_fut.plot(future_dates, future_prices, label="Forecast", color="red", marker='o')
+        ax_fut.legend()
+        st.pyplot(fig_fut)
+
+        st.success("Models trained, evaluated, and forecast completed successfully!")
